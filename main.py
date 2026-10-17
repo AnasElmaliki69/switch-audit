@@ -55,6 +55,7 @@ def main(argv=None):
     mode.add_argument("--inventory", type=Path, help="Explicit YAML device allowlist")
     parser.add_argument("--known-hosts", type=Path, help="Additional verified OpenSSH known_hosts file")
     parser.add_argument("--ask-enable", action="store_true", help="Prompt secretly for optional enable secret")
+    parser.add_argument("--prompt-password", action="store_true", help="Always use a hidden password prompt instead of SWITCH_AUDIT_PASSWORD")
     parser.add_argument("--output-dir", type=Path, default=BASE / "artifacts", help="Parent folder for private run folders")
     args = parser.parse_args(argv)
     try:
@@ -72,12 +73,14 @@ def main(argv=None):
                 raise ValueError("The specified known_hosts file does not exist.")
             # Dependency and inventory checks happen before asking for secrets.
             import netmiko  # noqa: F401
-            username = os.environ.get("SWITCH_AUDIT_USERNAME") or input("SSH username: ").strip()
-            password = os.environ.get("SWITCH_AUDIT_PASSWORD") or hidden_prompt("SSH password: ")
+            needs_username = any(not device.get("username") for device in devices)
+            username = (os.environ.get("SWITCH_AUDIT_USERNAME") or input("SSH username: ").strip()) if needs_username else ""
+            password = None if args.prompt_password else os.environ.get("SWITCH_AUDIT_PASSWORD")
+            password = password or hidden_prompt("SSH password: ")
             secret = os.environ.get("SWITCH_AUDIT_ENABLE_SECRET", "")
             if args.ask_enable and not secret:
                 secret = hidden_prompt("Enable secret (Enter to skip): ")
-            if not username or not password:
+            if (needs_username and not username) or not password:
                 raise ValueError("A username and password are required.")
             directory = private_directory(args.output_dir / "live")
             results = collect_all(devices, dict(username=username, password=password, secret=secret),
@@ -86,7 +89,16 @@ def main(argv=None):
         print(f"Backups: {directory}")
         print("Configuration analysis cannot prove port reachability or use of a default password.")
         return 1 if any(r.status != "success" for r in results) else 0
-    except (Exception, KeyboardInterrupt):
+    except GetPassWarning:
+        print("Run stopped: hidden password input is unavailable. Run this command in an interactive terminal.", file=sys.stderr)
+        return 2
+    except ModuleNotFoundError as error:
+        print(f"Run stopped: missing Python dependency {error.name}. Install requirements.txt with this interpreter.", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print("Run interrupted; collection was not completed.", file=sys.stderr)
+        return 2
+    except Exception:
         # Do not print raw exceptions: YAML/SSH errors can include sensitive input.
         print("Run stopped: check dependencies, inventory format, credentials, trusted-key path and output permissions.", file=sys.stderr)
         return 2

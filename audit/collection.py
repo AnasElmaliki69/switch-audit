@@ -31,10 +31,10 @@ def collect_device(device, credentials, backup_dir, connector=None, known_hosts=
     try:
         from netmiko import ConnectHandler
         from netmiko.exceptions import NetmikoAuthenticationException, NetmikoTimeoutException, ReadTimeout
-        from paramiko import SSHException
+        from paramiko import BadHostKeyException, SSHException
         connector = connector or ConnectHandler
         options = dict(device_type="cisco_ios", host=device["host"], port=device.get("port", 22),
-                       username=credentials["username"], password=credentials["password"],
+                       username=device.get("username") or credentials["username"], password=credentials["password"],
                        secret=credentials.get("secret", ""), ssh_strict=True, system_host_keys=True,
                        use_keys=False, allow_agent=False, conn_timeout=15, auth_timeout=15,
                        banner_timeout=15, timeout=30)
@@ -54,8 +54,12 @@ def collect_device(device, credentials, backup_dir, connector=None, known_hosts=
         return Result(device["name"], "authentication_failed", "SSH authentication failed; no backup saved.")
     except (NetmikoTimeoutException, ReadTimeout, TimeoutError):
         return Result(device["name"], "timeout", "Connection or command timed out; no backup saved.")
-    except SSHException:
-        return Result(device["name"], "ssh_error", "SSH negotiation or host-key verification failed; no backup saved.")
+    except BadHostKeyException:
+        return Result(device["name"], "host_key_changed", "SSH host key differs from the trusted entry. Verify it through the CML console before updating known_hosts; no backup saved.")
+    except SSHException as error:
+        if "not found in known_hosts" in str(error):
+            return Result(device["name"], "host_key_untrusted", "SSH host key is not trusted. Independently verify and enroll it in known_hosts; no backup saved.")
+        return Result(device["name"], "ssh_error", "SSH negotiation failed; no backup saved. Check host-key trust and SSH compatibility.")
     except ValueError:
         return Result(device["name"], "command_error", "Enable failed, or output was empty, erroneous, or incomplete; no backup saved.")
     except OSError:

@@ -10,6 +10,26 @@ class RuleTests(unittest.TestCase):
     def test_secure_fixture(self):
         self.assertEqual(analyze((DEMO / "secure.cfg").read_text()), [])
 
+    def test_iol_ssh_only_vty_zero_to_four_needs_no_extra_lines(self):
+        config = '''! FICTIONAL IOL-L2-style configuration, not a live backup.
+version 17.18
+hostname FICTIONAL-IOL
+username netadmin privilege 15 secret 9 FICTIONAL_HASH_ONLY
+ip ssh version 2
+line vty 0 4
+ login local
+ transport input ssh
+end
+'''
+        self.assertEqual(analyze(config), [])
+
+    def test_common_username_is_potential_not_default_password_proof(self):
+        findings = analyze("username admin privilege 15 secret 9 FICTIONAL_HASH_ONLY\nline vty 0 4\n transport input ssh\n")
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].rule_id, "DEFAULT_USERNAME")
+        self.assertEqual(findings[0].severity, "potential")
+        self.assertIn("does not establish a default password", findings[0].explanation)
+
     def test_insecure_fixture_counts_and_redaction(self):
         findings = analyze((DEMO / "insecure.cfg").read_text())
         ids = [f.rule_id for f in findings]

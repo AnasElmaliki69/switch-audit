@@ -84,8 +84,55 @@ class CollectionTests(unittest.TestCase):
         key = RSAKey.generate(1024)
         exception = BadHostKeyException(DEVICE["host"], key, key)
         result = collect_device(DEVICE, CREDENTIALS, self.directory, Mock(side_effect=exception))
-        self.assertEqual(result.status, "ssh_error")
+        self.assertEqual(result.status, "host_key_changed")
         self.assertFalse(list(self.directory.glob("*.cfg")))
+
+    def test_unknown_host_key_is_not_enrolled_or_saved(self):
+        connector = Mock(side_effect=SSHException("Server '192.0.2.10' not found in known_hosts; NEVER_PRINT"))
+        result = collect_device(DEVICE, CREDENTIALS, self.directory, connector)
+        self.assertEqual(result.status, "host_key_untrusted")
+        self.assertNotIn("NEVER_PRINT", repr(result))
+        self.assertTrue(connector.call_args.kwargs["ssh_strict"])
+        self.assertFalse(list(self.directory.glob("*.cfg")))
+
+    def test_inventory_username_overrides_shared_username(self):
+        connection = Mock()
+        connection.send_command.return_value = CONFIG
+        connector = Mock(return_value=connection)
+        result = collect_device(dict(DEVICE, username="netadmin"), CREDENTIALS, self.directory, connector)
+        self.assertEqual(result.status, "success")
+        self.assertEqual(connector.call_args.kwargs["username"], "netadmin")
+
+    def test_inventory_accepts_optional_username_but_not_secrets(self):
+        path = self.directory / "devices.yaml"
+        body = "devices:\n  - name: lab\n    host: 192.0.2.10\n    username: netadmin\n"
+        path.write_text(body)
+        self.assertEqual(load_inventory(path)[0]["username"], "netadmin")
+        for setting in ("password: SECRET", "secret: SECRET", "enable_secret: SECRET", "username: ''", "username: 123", "username: two words"):
+            with self.subTest(setting=setting):
+                # Replace rather than duplicate YAML keys in the invalid-username cases.
+                invalid = body.replace("    username: netadmin\n", "") + "    " + setting + "\n"
+                path.write_text(invalid)
+                with self.assertRaises(ValueError):
+                    load_inventory(path)
+
+    def test_prompt_password_ignores_environment_without_username_prompt(self):
+        path = self.directory / "devices.yaml"
+        path.write_text("devices:\n  - name: lab\n    host: 192.0.2.10\n    username: netadmin\n")
+        from audit.collection import Result
+        with patch.dict("os.environ", {"SWITCH_AUDIT_PASSWORD": "ENV_TEST_ONLY"}, clear=True), \
+                patch("main.getpass", return_value="PROMPT_TEST_ONLY") as prompt, \
+                patch("builtins.input", side_effect=AssertionError("username already in inventory")), \
+                patch("main.collect_all", return_value=[Result("lab", "success")]) as collect, \
+                contextlib.redirect_stdout(io.StringIO()) as terminal:
+            status = main(["--inventory", str(path), "--prompt-password", "--output-dir", str(self.directory)])
+        self.assertEqual(status, 0)
+        prompt.assert_called_once_with("SSH password: ")
+        self.assertEqual(collect.call_args.args[1]["password"], "PROMPT_TEST_ONLY")
+        self.assertEqual(collect.call_args.args[0][0]["username"], "netadmin")
+        csv_content = next(self.directory.rglob("audit.csv")).read_text()
+        self.assertNotIn("PROMPT_TEST_ONLY", terminal.getvalue() + csv_content)
+        self.assertNotIn("ENV_TEST_ONLY", terminal.getvalue() + csv_content)
 
     def test_no_enable_when_secret_absent(self):
         connection = Mock()

@@ -6,8 +6,7 @@ insecure settings. Start with the fictional demo: it makes **no network
 connections** and requires **no credentials**.
 
 Python 3.10 or newer is required. These commands assume a terminal opened in
-this `switch-audit` folder. No Git repository has been created; this folder is
-ready to review and put in your own repository later.
+this `switch-audit` folder. The short README also covers the Windows CML lab.
 
 ## Windows PowerShell
 
@@ -70,8 +69,10 @@ devices:
     device_type: cisco_ios
 ```
 
-Only `name`, `host`, optional `port` (default 22), and optional `device_type`
-(only `cisco_ios`) are accepted. Netmiko uses this driver for both IOS and IOS
+Only `name`, `host`, optional `port` (default 22), optional `device_type`
+(only `cisco_ios`), and optional `username` are accepted. A username is an
+account identifier, not a password. Passwords and enable secrets are forbidden
+in the inventory. Netmiko uses this driver for both IOS and IOS
 XE. Names must start with a letter, use letters/digits/underscores/hyphens and
 be unique ignoring case. Reserved Windows filenames are rejected. Hosts must
 be individual IP addresses or DNS names, never subnets or ranges. The complete
@@ -86,8 +87,11 @@ The configuration collection command is `show running-config`.
 
 ## Credentials
 
-By default the tool prompts for a username and hides password input with
-Python's `getpass`. Add `--ask-enable` to hide-prompt for an optional enable
+An inventory `username` takes precedence for that device. For entries without
+one, the tool uses `SWITCH_AUDIT_USERNAME` or prompts for a shared username.
+Password input is hidden with Python's `getpass`. Add `--prompt-password` to
+force the hidden prompt even if `SWITCH_AUDIT_PASSWORD` is set.
+Add `--ask-enable` to hide-prompt for an optional enable
 secret (Enter skips it). If the account already has sufficient privilege, no
 enable secret is necessary. Prompts occur once and the credentials are used
 for each listed device.
@@ -98,7 +102,7 @@ Use a normal interactive terminal or the environment variables below.
 
 Alternatively supply `SWITCH_AUDIT_USERNAME`, `SWITCH_AUDIT_PASSWORD`, and
 optionally `SWITCH_AUDIT_ENABLE_SECRET` in the process environment. There are
-no credential command-line flags or inventory credential fields. Avoid typing
+no password command-line flags or inventory password fields. Avoid typing
 secrets into shell commands, which can retain them in history. These examples
 set the password from a hidden prompt:
 
@@ -176,7 +180,9 @@ transport settings only in `line vty` sections, credential commands in global
 sections. Comments, descriptions and banner contents are ignored. Type 5/8/9
 credential encodings are recognized without declaring their strength or
 checking hashes. Other encodings need review. Missing transport settings are
-not assigned assumed IOS defaults, which vary by software/platform; see the
+not assigned assumed IOS defaults, which vary by software/platform. Only
+present VTY sections are checked: an SSH-only `line vty 0 4` section does not
+require additional VTY lines 5-15. See the
 [Cisco terminal services command reference](https://www.cisco.com/c/en/us/td/docs/ios/termserv/command/reference/tsv_book/tsv_s1.html).
 
 This is a focused audit, not a full IOS parser or compliance engine. It does

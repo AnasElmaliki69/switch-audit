@@ -3,6 +3,9 @@ venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+*.log
+logs/
+session_logs/
 .env
 .env.*
 credentials*
@@ -10,6 +13,8 @@ credentials*
 *.yaml
 *.yml
 !devices.example.yaml
+devices.local.yaml
+*.local.*
 known_hosts*
 backups/
 reports/
