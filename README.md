@@ -1,107 +1,219 @@
 # switch-audit
 
-Back up Cisco IOS/IOS XE configurations over SSH and flag settings that need
-review. For the full setup and rule reference, see [GETTING_STARTED.md](GETTING_STARTED.md).
+This is a small Python network automation project. It saves a Cisco switch's
+running configuration and checks a few settings that deserve a closer look.
+The aim is to make the same checks repeatable without reading the entire
+configuration by hand each time.
 
-## Windows CML lab
+It supports Cisco IOS and IOS XE through Netmiko over SSH. You can try it with
+fictional configurations before connecting to a switch.
 
-The existing lab uses Windows → VMware NAT → CML Free 2.10.1's External
-Connector (`System Bridge / bridge0`) → IOL-L2 XE 17.18.02. Connect directly
-to the switch's Vlan1 address, **not** the CML server address. The last observed
-addresses were `192.168.181.129` for `LabSwitch` (node `iol-l2-0`) and
-`192.168.181.128` for CML. Vlan1 uses DHCP, so check the switch's current
-address in the CML console with `show ip interface brief` after a restart.
+## What it does
 
-Open PowerShell in this project folder. Create the environment only if it is
-missing, then install dependencies:
+1. Reads an explicit YAML inventory and validates it before connecting.
+2. Verifies the switch's SSH host key and logs in with your credentials.
+3. Runs `show running-config` and rejects empty, erroneous or incomplete output.
+4. Saves a backup in a private folder named with a UTC timestamp.
+5. Prints findings and writes an `audit.csv` report in the same folder.
+
+The checks look for Telnet permitted in VTY sections, explicit plaintext
+passwords, Cisco type 7 passwords, and local usernames from a small common-name
+list. Missing or unsupported settings are marked for review where the parser
+cannot establish their meaning.
+
+A configuration permitting Telnet does not prove that its port is reachable.
+A username such as `admin` does not prove that a default password is in use.
+These are configuration findings, not confirmed vulnerabilities.
+
+## Try the demo
+
+Use Python 3.10 or newer. Open a terminal in the folder containing `main.py`.
+On Windows, `py -3` refers to the installed Python launcher. If it is unavailable,
+use the path to your installed Python interpreter to create the environment.
+If `.venv` already exists, reuse it and skip the first command.
+
+Windows PowerShell:
 
 ```powershell
-if (-not (Test-Path .\.venv\Scripts\python.exe)) { py -3 -m venv .venv }
+py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe main.py --help
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe main.py --demo
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-The Git-ignored `devices.local.yaml` is already prepared locally with
-`name: LabSwitch`, `host: 192.168.181.129`, `device_type: cisco_ios`,
-`username: netadmin`, and `port: 22`, beneath the `devices:` list. It has no
-password. A fresh clone should copy `devices.example.yaml` to
-`devices.local.yaml`, replace the fictional fields, and add `username: netadmin`.
+macOS or Linux:
 
-Check the single authorized endpoint from your Windows terminal:
+```bash
+python3 -m venv .venv
+./.venv/bin/python -m pip install -r requirements.txt
+./.venv/bin/python main.py --demo
+./.venv/bin/python -m unittest discover -s tests -v
+```
+
+The demo uses only files in `demo/`. It makes no network connections and asks
+for no credentials. Its expected results are:
+
+| Sample | Result |
+| --- | --- |
+| `demo-secure` | No issues found by implemented checks |
+| `demo-insecure` | Two Telnet findings, three plaintext password findings, one type 7 finding, one potential common-username issue |
+| `demo-ambiguous` | Two VTY settings and one password encoding marked for review |
+
+An activated environment also lets you use `python main.py --demo`.
+Use `python main.py --help` to see all options.
+
+## Connect to an authorized switch
+
+All addresses in the public examples are fictional documentation addresses.
+Replace them with your authorized switch's current address before a live run.
+The program does not discover devices, expand subnets, or try default passwords.
+
+In PowerShell, make a local inventory:
 
 ```powershell
-Test-NetConnection -ComputerName 192.168.181.129 -Port 22
+Copy-Item devices.example.yaml devices.local.yaml
+notepad devices.local.yaml
 ```
 
-### Trust the switch's SSH key
+Keep only the devices you intend to contact. For example:
 
-SSH host-key verification stays enabled. Through the trusted CML console,
-obtain the switch's SSH host public key/fingerprint (for example, inspect
-`show crypto key mypubkey rsa`) and compare its SHA256 fingerprint with the
-one offered by Windows OpenSSH. The configured key size of 4096 bits and
-`show ip ssh` reporting version 2 do **not** establish key identity by themselves.
-If the console only shows the public key data, have your lab administrator
-derive its fingerprint in OpenSSH format before accepting it. Do not compare
-an MD5 fingerprint directly with a SHA256 fingerprint.
+```yaml
+devices:
+  - name: lab-access-01
+    host: 192.0.2.10
+    device_type: cisco_ios
+    username: laboperator
+    port: 22
+```
+
+The account name can be in the inventory. Passwords and enable secrets cannot.
+The complete inventory is validated before SSH. If you use a DNS name, your
+system resolver decides which address it reaches.
+
+Before connecting, obtain the switch's SSH host-key fingerprint through a
+separately trusted console or administrator. Connect with OpenSSH and compare
+the offered fingerprint with that trusted fingerprint:
 
 ```powershell
-ssh -o StrictHostKeyChecking=ask -p 22 netadmin@192.168.181.129
+ssh -o StrictHostKeyChecking=ask -p 22 laboperator@192.0.2.10
 ```
 
-Accept only when the fingerprint matches the independently verified key.
-Enter your private password locally if prompted, then `exit`. This enrolls
-the trusted key in `$HOME\.ssh\known_hosts`. Do not blindly trust
-`ssh-keyscan` output or disable checking. If Windows reports a changed key,
-first confirm the current DHCP lease and verify the replacement through CML;
-only then remove the obsolete entry and enroll the verified key again:
+Accept only a matching key, log in locally, then exit. This creates an entry
+in `$HOME\.ssh\known_hosts`. Key size and SSH version alone do not verify
+the device's identity. Do not blindly trust `ssh-keyscan` output.
 
-```powershell
-# Run only after independently verifying the changed key and device identity.
-ssh-keygen -R 192.168.181.129 -f "$HOME\.ssh\known_hosts"
-```
-
-### Run the read-only backup and audit
+Then run the backup and audit:
 
 ```powershell
 .\.venv\Scripts\python.exe main.py --inventory devices.local.yaml --known-hosts "$HOME\.ssh\known_hosts" --prompt-password
 ```
 
-`--prompt-password` always uses hidden `getpass` input, even if a password
-environment variable exists. Do not paste passwords into commands, this file,
-the inventory, or chat. `netadmin` already has privilege 15, so an enable
-secret should normally be unnecessary. Add `--ask-enable` only if your actual
-login requires it; that prompt is also hidden.
+`--prompt-password` uses hidden `getpass` input, even if a password environment
+variable is set. Input stops if a hidden prompt is unavailable. Add
+`--ask-enable` if the account requires a separate enable secret. A privilege 15
+account normally does not need that step.
 
-Successful collection saves `LabSwitch.cfg` and `audit.csv` inside a private,
-UTC-timestamped folder under `artifacts/live/`. Backups contain sensitive full
-configurations; report findings omit secret values. Failed or empty command
-output never counts as a successful backup. Real inventories, environments,
-trusted-key files, backups, and reports are ignored by Git.
+For macOS or Linux, use the same options with `./.venv/bin/python` and
+`"$HOME/.ssh/known_hosts"`. Further options and credential details are in
+[GETTING_STARTED.md](GETTING_STARTED.md).
 
-### If it fails
+## Reading a result
 
-- **Unreachable / timeout:** Start the CML node, check Vlan1 is up/up and the
-  link through Ethernet0/0 → bridge0 → VMware NAT, then repeat the TCP test.
-  Do not target the CML management IP or scan the subnet.
-- **DHCP address changed:** Read `show ip interface brief` in the switch
-  console and update only `host` in `devices.local.yaml`. Verify the host key
-  for that address before logging in; another device may have the old lease.
-- **Authentication failed:** Confirm `netadmin` and your locally configured
-  password with OpenSSH. The private-password placeholder is never a password.
-  The collector does not try default passwords or retry with other accounts.
-- **Host-key error:** `host_key_untrusted` needs verified enrollment;
-  `host_key_changed` needs device/key re-verification. A generic `ssh_error`
-  may also mean SSH algorithm negotiation failed; inspect `ssh -v` locally
-  without weakening the collector's host-key checks.
-- **Missing dependency / hidden input unavailable:** Use the project's `.venv`
-  interpreter in an interactive PowerShell terminal and install requirements.
+This is a sanitized example using a fictional device name:
 
-The image supports only `line vty 0 4`; `transport input ssh` is SSH-only and
-absent VTY lines 5-15 do not produce a finding. A common username is only a
-potential issue, never proof of a default password. Config analysis cannot
-prove port reachability or password use. No findings means **“No issues found
-by implemented checks”**, not full compliance. Live SSH collection is confirmed
-only after a real authenticated run succeeds; offline tests and TCP reachability
-alone do not establish that.
+```csv
+device_name,collection_status,rule_id,severity,explanation
+lab-access-01,success,VTY_TELNET,high,line vty 4: transport input permits Telnet in the configuration; reachability is unverified.
+```
+
+`success` means configuration collection and backup succeeded. It does not
+mean the settings are secure. A device can have several finding rows. When
+none of the implemented checks finds an issue, the report says
+`No issues found by implemented checks`.
+
+Each run writes a new folder under `artifacts/live/` or `artifacts/demo/`.
+Open the CSV in the folder printed by that run, rather than an older report.
+Exit code 0 means collections succeeded, 1 means a device failed collection,
+and 2 means the run stopped because of a setup or run-level error. Findings
+alone do not change the exit code to 1.
+
+## The lab and what was tested
+
+I used a Windows lab with VMware Workstation, CML Free 2.10.1, and an IOL-L2
+switch running IOL L2 XE 17.18.02. The recorded setup uses VMware NAT and a
+CML External Connector configured as `System Bridge / bridge0`.
+
+Windows connects directly to the switch's Vlan1 management IP on TCP 22.
+The CML server's management IP is a different endpoint. Vlan1 gets its address
+through DHCP, so the inventory may need updating after a restart.
+
+Local backups and CSV reports support a successful SSH-only collection, a
+Telnet finding on VTY 4 during a controlled change, and a later SSH-only result
+after that setting was restored. A separate run recorded a timeout. Those
+private artifacts were reviewed, but are not committed. The public example
+above is reconstructed and sanitized, not a raw switch backup.
+
+The IOL image accepted VTY lines 0-4. The tool checks the sections present and
+does not require VTY lines 5-15. Offline tests use fictional text and mocked
+connections; they are separate from these live lab results. See
+[VALIDATION.md](VALIDATION.md) for the scope of the evidence and remaining gaps.
+
+### What I practiced
+
+The lab exercise connected SSH access, Python command collection, and reading
+VTY settings in a real running configuration. The Telnet test also showed why
+a backup is a snapshot: an earlier CSV still described the earlier settings.
+The finding identifies a configuration choice; it does not test whether a
+Telnet connection can actually reach the switch.
+
+### Troubleshooting the lab
+
+| Symptom | What to check |
+| --- | --- |
+| Unreachable or timeout | Check the node is running, Vlan1 is up/up, and the External Connector reaches VMware NAT. Test only the intended endpoint with `Test-NetConnection -ComputerName 192.0.2.10 -Port 22`, replacing the fictional IP. |
+| Address changed | Read `show ip interface brief` in the CML switch console, update the local inventory, and verify the device identity at the new address. |
+| Authentication failed | Check the account and password using OpenSSH in your own terminal. Do not put a password in the inventory. |
+| Unknown host key | Verify the fingerprint through the trusted console and enroll it with OpenSSH. |
+| Changed host key | Check for a changed DHCP lease or regenerated key. Verify the replacement before updating the trusted entry. Do not disable verification. |
+| Rejected output | Check command permissions and output manually. An error response is not a backup. |
+
+## Security choices and limits
+
+The collector uses `ssh_strict=True` and loads trusted host keys. It does not
+offer an insecure bypass. It collects configuration without changing switch
+settings. Netmiko may prepare the terminal session to disable paging and set
+its width, and the optional enable step changes session privilege.
+
+Reports omit configuration lines and secret values. Raw SSH exceptions are
+not printed because they can contain command output. Authentication failures,
+timeouts, host-key failures, and command errors are recorded per device so
+other inventory entries can still be attempted.
+
+Full backups can contain credentials and password hashes. They are stored
+unencrypted. New run folders use restricted Windows ACLs or POSIX mode 0700;
+POSIX files use 0600. Administrator access, filesystem support, and copies to
+shared or synced folders remain outside that protection. Failed writes attempt
+to remove partial files. There is no backup rotation or automatic restore.
+
+The parser covers a subset of IOS syntax. It does not assess password strength,
+ACL reachability, AAA policies, SNMP communities, every credential format, or
+other vendors. Types 5, 8 and 9 are recognized without declaring their hashes
+strong. Finding severities are a small local checklist, not a compliance standard
+or vulnerability score. Broad device compatibility and large inventories have
+not been tested.
+
+`.gitignore` excludes local inventories, secrets, keys, backups, reports, logs,
+and virtual environments. Ignoring a file does not remove it from an existing
+commit or Git history. Review staged files before publishing. Earlier lab
+addresses remain in historical documentation; no history was rewritten here.
+
+## Code layout
+
+| File | Responsibility |
+| --- | --- |
+| `main.py` | CLI modes, prompts, terminal summary, CSV report |
+| `audit/inventory.py` | Inventory validation, including duplicate field rejection |
+| `audit/collection.py` | SSH collection, output validation, per-device failures |
+| `audit/rules.py` | Section parsing and configuration checks |
+| `audit/storage.py` | Private run folders and exclusive file creation |
+| `demo/` and `tests/` | Fictional examples and offline checks |

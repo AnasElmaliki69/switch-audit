@@ -1,39 +1,81 @@
-# Validation performed on 2026-10-10
+# Validation notes
 
-- Python 3.12.14 on Windows; Netmiko 4.8.0 and PyYAML 6.0.3.
-- `python -m unittest discover -s tests -v`: **22 tests passed**.
-- `python main.py --demo`: **exit 0**, three successful fictional backups and CSV output.
-- The standalone demo also ran without Netmiko/PyYAML on its import path.
-- Windows run folder/file ACLs were inspected: the run folder grants the current
-  user full control and backup files inherit restricted grants. This environment
-  also retains explicit SYSTEM, Administrators and OWNER RIGHTS grants; no
-  Everyone, Users or Authenticated Users grants were present.
+## Evidence reviewed
 
-Expected findings matched the output: secure = no issues found by implemented
-checks; insecure = 2 Telnet, 3 plaintext, 1 type 7, 1 potential common/default
-username; ambiguous = 2 VTY reviews and 1 password encoding review.
+The repository contains fictional configurations and offline tests. The local
+workspace also contains private live backups and CSV reports excluded by Git.
+Their collection statuses and VTY settings were reviewed without publishing
+configuration lines containing credentials or secret values.
 
-Tests cover mocked collection, including strict host-key options, changed-key
-rejection, hidden-prompt fallback refusal, empty/error/truncated responses,
-authentication/read/command failures, and continuing to subsequent devices.
+The recorded lab setup is Windows, VMware Workstation with NAT, CML Free
+2.10.1, and IOL L2 XE 17.18.02. A CML External Connector uses
+`System Bridge / bridge0`. Vlan1 uses DHCP. These describe one lab, not support
+for other images or network designs.
 
-No live switches were contacted. Live SSH behavior remains unverified until
-tested against an authorized IOS/IOS XE switch. POSIX permissions are implemented
-and have an OS-conditional test, but were not executed on this Windows host.
-Configuration analysis cannot prove port reachability or use of a default password.
+Local run folders have UTC timestamps on 2026-10-17, corresponding to
+2026-10-18 in Europe/Paris. Device names and addresses are omitted here.
 
-## Windows lab integration checks — 2026-10-18
+| Existing local evidence | Observed result |
+| --- | --- |
+| SSH-only backup and report | Collection succeeded; VTY 0-4 allowed SSH; report contained `NO_ISSUES` |
+| Separate attempted collection | Report recorded `timeout`; that run folder contained no configuration backup |
+| Telnet test backup and report | Collection succeeded; VTY 0-3 allowed SSH and VTY 4 allowed Telnet plus SSH; report contained `VTY_TELNET` |
+| Later restored backup and report | Collection succeeded; VTY 0-4 allowed SSH; report contained `NO_ISSUES` |
 
-- Created a project `.venv` using Python 3.12.14 and installed requirements
-  (Netmiko 4.8.0, Paramiko 5.0.0, PyYAML 6.0.3).
-- `python -m unittest discover -s tests -v`: **28 tests passed**.
-- `python main.py --demo`: **exit 0**, all three fictional collections passed
-  and the expected secure/insecure/ambiguous findings were preserved.
-- `python -m pip check`: **No broken requirements found**.
-- Added regression coverage for optional inventory usernames, password prompt
-  precedence and redaction, unknown/changed SSH keys, and IOL-L2 configurations
-  with SSH-only VTY 0-4 and no additional VTY lines.
-- Live endpoint readiness is recorded separately in Git-ignored artifacts.
-  No authenticated lab collection was performed: this process had no switch
-  password. TCP/SSH handshake success is not evidence of successful login,
-  a configuration backup, or a live audit report.
+The backups have a hostname and final `end`. Re-running the parser on those
+files agrees with the reported rule IDs. This supports the live collection and
+detection results for this lab. It is not a packet capture, proof of Telnet
+reachability, or testing across multiple real devices. Private originals are
+intentionally not in the public repository. README output is reconstructed
+and sanitized rather than a raw report.
+
+## Current offline verification
+
+On 2026-10-18, the existing Windows `.venv` used Python 3.12.14, Netmiko 4.8.0,
+Paramiko 5.0.0, and PyYAML 6.0.3. The review ran:
+
+| Command, using `.venv\Scripts\python.exe` | Result |
+| --- | --- |
+| `-m pip install -r requirements.txt` | All three pinned direct dependencies were already installed |
+| `-m unittest discover -s tests -v` | 38 tests passed |
+| `main.py --help` | Options matched the README and reference notes |
+| `main.py --demo` | Exit 0; three fictional backups and CSV report created; findings matched the documented counts |
+| `-m pip check` | No broken requirements found |
+
+New tests cover banner text versus real CLI errors, incomplete output hidden
+inside a banner, partial-write cleanup, preservation of an existing file,
+duplicate inventory fields, missing input files, and errors that must not echo
+secret-bearing YAML. The demo test blocks connection and credential prompts.
+
+The verification above was completed locally before publication. No new
+authenticated switch session or switch configuration change was performed
+during this review.
+
+## Git review
+
+Before editing, the repository was clean on `main`, tracking `origin/main`.
+The review examined all six commits reachable from local refs and 26 unique
+file blobs. Only source, documentation, fictional configurations, the example
+inventory and tests were tracked. Real inventories, live artifacts and the
+virtual environment were not tracked.
+
+A targeted scan found no private-key blocks or recognizable GitHub/AWS token
+markers. It is not an exhaustive secret audit. Credential-like strings in the
+tests and demo files are explicitly synthetic.
+
+The previous README included private lab IPs. Current examples use fictional
+documentation addresses. Earlier details remain in Git history. No commits,
+remote settings or history were rewritten in this review. An ignore rule does
+not remove a committed file or revoke an exposed credential.
+
+## What remains untested
+
+No new authenticated switch session is part of this review. It uses existing
+local live artifacts and new offline verification. The macOS/Linux setup,
+POSIX permission behavior, other images, large inventories, and negotiation
+with other SSH servers have not been verified here. The Windows Python-launcher
+bootstrap is documented but the existing `.venv` is reused, not recreated.
+
+The checks do not test reachability, password strength, AAA/ACL policy, SNMP
+secrets, all Cisco credential formats, restore behavior or backup retention.
+No vulnerability-scanner or regulatory-compliance claim is made.

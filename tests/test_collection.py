@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 from netmiko.exceptions import NetmikoAuthenticationException, NetmikoTimeoutException, ReadTimeout
 from paramiko import BadHostKeyException, RSAKey, SSHException
 
-from audit.collection import collect_all, collect_device
+from audit.collection import collect_all, collect_device, validate_config
 from audit.inventory import load_inventory
 from audit.storage import private_directory, private_write
 from main import hidden_prompt, main, report
@@ -50,6 +50,22 @@ class CollectionTests(unittest.TestCase):
                 self.assertEqual(result.status, "command_error")
                 self.assertFalse(list(self.directory.glob("*.cfg")))
                 connection.disconnect.assert_called_once()
+
+    def test_error_words_in_a_banner_do_not_reject_valid_output(self):
+        banner = "banner motd ^C\n% Authorized lab users only\nError: example banner text\n^C\n"
+        config = CONFIG.replace("line con 0", banner + "line con 0")
+        self.assertEqual(validate_config(config), config)
+
+    def test_error_outside_a_banner_still_rejects_the_backup(self):
+        config = CONFIG.replace("end", "% Command authorization failed\nend")
+        with self.assertRaises(ValueError):
+            validate_config(config)
+
+    def test_banner_cannot_supply_a_fake_hostname_or_hide_truncation(self):
+        for config in ("banner motd ^C\nhostname FAKE\n^C\nend\n",
+                       "hostname LAB\nbanner motd ^C\nunterminated banner\nend\n"):
+            with self.subTest(config=config), self.assertRaises(ValueError):
+                validate_config(config)
 
     def test_failures_continue_to_next_device(self):
         for exception, status in ((NetmikoAuthenticationException("NEVER_PRINT"), "authentication_failed"),

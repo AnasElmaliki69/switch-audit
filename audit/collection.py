@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 import re
 
-from .rules import analyze
+from .rules import analyze, sections
 from .storage import private_write
 
 
@@ -18,10 +18,15 @@ class Result:
 def validate_config(output):
     if not isinstance(output, str) or not output.strip():
         raise ValueError("Empty configuration output")
-    # Conservatively reject CLI diagnostics and incomplete/paginated responses.
-    if re.search(r"(?im)^\s*%|--\s*More\s*--|(?im:^[ \t]*(?:error:|invalid command|permission denied|command authorization failed))", output):
+    commands = []
+    for header, children in sections(output):
+        commands.extend([header, *children])
+    # Banner text can contain '%' or words such as 'error' without being a CLI error.
+    command_text = "\n".join(commands)
+    diagnostics = r"^%|--\s*More\s*--|^(?:error:|invalid command|permission denied|command authorization failed)"
+    if re.search(diagnostics, command_text, re.IGNORECASE | re.MULTILINE):
         raise ValueError("CLI error or pagination")
-    if not re.search(r"(?m)^hostname \S+\s*$", output) or output.strip().splitlines()[-1].strip() != "end":
+    if not re.search(r"(?m)^hostname \S+$", command_text) or not commands or commands[-1] != "end":
         raise ValueError("Unrecognized or incomplete configuration")
     return output
 

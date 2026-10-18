@@ -86,7 +86,10 @@ end
             with self.subTest(command=command):
                 findings = analyze(prefix + command)
                 self.assertNotIn("TOP_SECRET", repr(findings))
-                self.assertEqual(rule in [f.rule_id for f in findings] if rule else not findings, True)
+                if rule is None:
+                    self.assertEqual(findings, [])
+                else:
+                    self.assertIn(rule, [f.rule_id for f in findings])
 
     def test_incomplete_explicit_password_types_need_review(self):
         for kind in ("0", "7", "9"):

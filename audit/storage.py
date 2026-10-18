@@ -26,7 +26,16 @@ def private_directory(parent):
 
 
 def private_write(path, content):
+    path = Path(path)
     # Exclusive creation avoids silently overwriting files or following an existing symlink.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
-        stream.write(content)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
+            stream.write(content)
+    except BaseException:
+        # Do not leave a partial backup looking like a complete configuration.
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise

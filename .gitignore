@@ -3,7 +3,16 @@ venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.coverage
+htmlcov/
+.DS_Store
+Thumbs.db
 *.log
+*.csv
+*.pem
+*.key
+*.pfx
+*.ppk
 logs/
 session_logs/
 .env
